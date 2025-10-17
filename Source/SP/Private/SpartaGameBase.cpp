@@ -21,6 +21,10 @@ ASpartaGameBase::ASpartaGameBase()
 	LevelDuration = 20.0f;
 	CurrentLevelIndex = 0;
 	MaxLevels = 3;
+
+	CurrentWaveIndex = 0;
+	MaxWaveCount = 3;
+	WaveDuration = 20.0f;
 }
 
 void ASpartaGameBase::BeginPlay()
@@ -35,7 +39,7 @@ void ASpartaGameBase::BeginPlay()
 		&ASpartaGameBase::UpdateHUD,
 		0.1f,
 		true
-		);
+	);
 	
 }
 
@@ -56,20 +60,39 @@ void ASpartaGameBase::AddScore(int32 Amount)
 	}
 }
 
-void ASpartaGameBase::OnGameOver()
+
+void ASpartaGameBase::OnCoinCollected()
 {
-	if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
+	++CollectedCoinCount;
+	++WaveCollectedCoinCount;
+
+	UE_LOG(LogTemp, Warning, TEXT("Wave %d Coin: %d / %d"),
+	       CurrentWaveIndex, WaveCollectedCoinCount, WaveSpawnedCoinCount);
+
+	if (WaveSpawnedCoinCount > 0 && WaveCollectedCoinCount >= WaveSpawnedCoinCount)
 	{
-		if (ASpartaPlayerController* SpartaPlayerController = Cast<ASpartaPlayerController>(PlayerController))
+		// 웨이브 목표 달성 → 웨이브 타이머 정리 후 다음 단계로
+		GetWorldTimerManager().ClearTimer(WaveTimerHandle);
+
+		const bool bLastWave = (CurrentWaveIndex >= MaxWaveCount);
+		if (bLastWave)
 		{
-			SpartaPlayerController->SetPause(true);
-			SpartaPlayerController->ShowMainMenu(true);
+			OnLevelTimeUp();  // 마지막 웨이브면 레벨 종료
+		}
+		else
+		{
+			OnWaveTimeUp();   // 다음 웨이브로
 		}
 	}
 }
 
 void ASpartaGameBase::StartLevel()
 {
+
+	CurrentWaveIndex = 0;
+	StartWave();
+
+	
 	if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
 	{
 		if (ASpartaPlayerController* SpartaPlayerController = Cast<ASpartaPlayerController>(PlayerController))
@@ -92,57 +115,13 @@ void ASpartaGameBase::StartLevel()
 
 	TArray<AActor*> FoundVolumes;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpawnVolume::StaticClass(), FoundVolumes);
-
-	const int32 ItemToSpawn = 40;
-
-	for (int32 i = 0; i < ItemToSpawn; i++)
-	{
-		if (FoundVolumes.Num() > 0)
-		{
-			ASpawnVolume* SpawnVolume = Cast<ASpawnVolume>(FoundVolumes[0]);
-			if (SpawnVolume)
-			{
-				AActor* SpawnedActor = SpawnVolume->SpawnRandomItem();
-				if (SpawnedActor && SpawnedActor -> IsA(ACoinItem::StaticClass()))
-				{
-					SpawnedCoinCount++;
-				}
-			}
-		}
-	}
-
-	GetWorldTimerManager().SetTimer(
-		LevelTimerHandle,
-		this,
-		&ASpartaGameBase::OnLevelTimeUp,
-		LevelDuration,
-		false
-	);
+	
 	UpdateHUD();
 
 	UE_LOG(LogTemp, Warning, TEXT("Level %d Start!, Spawned %d coin"),
-		CurrentLevelIndex + 1,
-		SpawnedCoinCount);
+	       CurrentLevelIndex + 1,
+	       SpawnedCoinCount);
 	
-}
-
-void ASpartaGameBase::OnLevelTimeUp()
-{
-	EndLevel();
-}
-
-void ASpartaGameBase::OnCoinCollected()
-{
-	CollectedCoinCount++;
-
-	UE_LOG(LogTemp, Warning, TEXT("Coin Collected: %d / %d"), 
-			CollectedCoinCount,
-			SpawnedCoinCount)
-
-	if (SpawnedCoinCount > 0 && CollectedCoinCount >= SpawnedCoinCount)
-	{
-		EndLevel();
-	}
 }
 
 void ASpartaGameBase::EndLevel()
@@ -176,6 +155,23 @@ void ASpartaGameBase::EndLevel()
 	}
 }
 
+void ASpartaGameBase::OnLevelTimeUp()
+{
+	EndLevel();
+}
+
+void ASpartaGameBase::OnGameOver()
+{
+	if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
+	{
+		if (ASpartaPlayerController* SpartaPlayerController = Cast<ASpartaPlayerController>(PlayerController))
+		{
+			SpartaPlayerController->SetPause(true);
+			SpartaPlayerController->ShowMainMenu(true);
+		}
+	}
+}
+
 void ASpartaGameBase::UpdateHUD()
 {
 	if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
@@ -186,7 +182,8 @@ void ASpartaGameBase::UpdateHUD()
 			{
 				if (UTextBlock* TimeText = Cast<UTextBlock>(HUDWidget->GetWidgetFromName(TEXT("Time"))))
 				{
-					float RemainingTime = GetWorldTimerManager().GetTimerRemaining(LevelTimerHandle);
+					float RemainingTime = GetWorldTimerManager().GetTimerRemaining(WaveTimerHandle);
+					if (RemainingTime < 0.f) RemainingTime = 0.f;
 					TimeText->SetText(FText::FromString(FString::Printf(TEXT("Time: %.1f"), RemainingTime)));
 				}
 				
@@ -200,6 +197,11 @@ void ASpartaGameBase::UpdateHUD()
 							ScoreText->SetText(FText::FromString(FString::Printf(TEXT("Score: %d"), SpartaGameInstance->TotalScore)));
 						}
 					}
+				}
+
+				if (UTextBlock* WaveIndexText = Cast<UTextBlock>(HUDWidget->GetWidgetFromName(TEXT("Wave"))))
+				{
+					WaveIndexText->SetText(FText::FromString(FString::Printf(TEXT("Wave: %d"), CurrentWaveIndex)));
 				}
 				
 				if (UTextBlock* LevelIndexText = Cast<UTextBlock>(HUDWidget->GetWidgetFromName(TEXT("Level"))))
@@ -218,6 +220,77 @@ void ASpartaGameBase::UpdateHUD()
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+void ASpartaGameBase::StartWave()
+{
+	GetWorldTimerManager().ClearTimer(WaveTimerHandle);
+	GetWorldTimerManager().ClearTimer(LevelTimerHandle);
+
+	CurrentWaveIndex++;
+	WaveSpawnedCoinCount = 0;
+	WaveCollectedCoinCount = 0;
+
+	if (GEngine)
+		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Cyan,
+		                                 FString::Printf(TEXT("Wave %d 시작!"), CurrentWaveIndex));
+
+	const int32 ItemsToSpawn = 20 + (CurrentWaveIndex - 1) * 10; // 예시
+	SpawnItems(ItemsToSpawn); // 아래 4)에서 카운트 갱신 추가
+
+	const bool bLastWave = (CurrentWaveIndex >= MaxWaveCount);
+	GetWorldTimerManager().SetTimer(
+		/*Out*/ WaveTimerHandle,
+		        this,
+		        bLastWave ? &ASpartaGameBase::OnLevelTimeUp
+			        : &ASpartaGameBase::OnWaveTimeUp,
+		        WaveDuration,
+		        false
+	);
+}
+
+void ASpartaGameBase::OnWaveTimeUp()
+{
+	EndWave();
+}
+
+void ASpartaGameBase::EndWave()
+{
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Yellow,
+	                                 FString::Printf(TEXT("Wave %d 종료!"), CurrentWaveIndex));
+
+	if (CurrentWaveIndex < MaxWaveCount)
+	{
+		StartWave();
+	}
+	else
+	{
+		OnLevelTimeUp(); // 모든 웨이브 끝나면 레벨 종료
+	}
+}
+
+void ASpartaGameBase::SpawnItems(int32 Count)
+{
+	TArray<AActor*> FoundVolumes;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASpawnVolume::StaticClass(), FoundVolumes);
+	if (FoundVolumes.IsEmpty()) return;
+
+	ASpawnVolume* SpawnVolume = Cast<ASpawnVolume>(FoundVolumes[0]);
+	if (!SpawnVolume) return;
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		if (AActor* SpawnedActor = SpawnVolume->SpawnRandomItem())
+		{
+			if (SpawnedActor->IsA(ACoinItem::StaticClass()))
+			{
+				// 레벨 전체 카운트
+				++SpawnedCoinCount;
+				// 웨이브 카운트
+				++WaveSpawnedCoinCount;
 			}
 		}
 	}

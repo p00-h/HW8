@@ -55,4 +55,25 @@ public:
 	FTimerHandle HUDUpdateTimerHandle;
 	void UpdateHUD();
 
+public:
+	void StartWave();
+	void OnWaveTimeUp();
+	void EndWave();
+	void SpawnItems(int32 Count);
+	FTimerHandle WaveTimerHandle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Wave")
+	int32 CurrentWaveIndex;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave")
+	int32 MaxWaveCount;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave")
+	float WaveDuration;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Wave")
+	int32 WaveSpawnedCoinCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Wave")
+	int32 WaveCollectedCoinCount = 0;
 };
